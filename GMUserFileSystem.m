@@ -416,7 +416,7 @@ typedef enum {
 }
 
 #define FUSEDEVIOCGETHANDSHAKECOMPLETE _IOR('F', 2, u_int32_t)
-static const int kMaxWaitForMountTries = 50;
+static const int kMaxWaitForMountTries = 100;
 static const int kWaitForMountUSleepInterval = 100000;  // 100 ms
 
 - (void)waitUntilMounted:(NSNumber *)fileDescriptor {
