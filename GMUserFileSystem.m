@@ -4,6 +4,7 @@
 //
 
 //  Copyright (c) 2011-2017 Benjamin Fleischer.
+//  Copyright (c) 2018 Syncplicity by Axway
 //  All rights reserved.
 
 //  OSXFUSE.framework is based on MacFUSE.framework. MacFUSE.framework is
