@@ -51,6 +51,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/dir.h>
 #include <sys/param.h>
 #include <sys/mount.h>
 #include <sys/ioctl.h>
@@ -66,6 +67,9 @@
 #import "GMDataBackedFileDelegate.h"
 
 #import "GMDTrace.h"
+
+// This macro is from fuse.c
+#define FUSE_UNKNOWN_INO 0xffffffff
 
 #define GM_EXPORT __attribute__((visibility("default")))
 
@@ -1005,6 +1009,79 @@ static const int kWaitForMountUSleepInterval = 100000;  // 100 ms
 
 #pragma mark Directory Contents
 
+- (BOOL)openDirectoryAtPath:(NSString *)path
+                   userData:(id *)userData
+                      error:(NSError **)error {
+
+  if (OSXFUSE_OBJC_DELEGATE_ENTRY_ENABLED()) {
+    NSString* traceinfo = [NSString stringWithFormat:@"%@", path];
+    OSXFUSE_OBJC_DELEGATE_ENTRY(DTRACE_STRING(traceinfo));
+  }
+
+  id delegate = [internal_ delegate];
+  if ([delegate respondsToSelector:_cmd]) {
+    if ([delegate openDirectoryAtPath:path
+                             userData:userData
+                                error:error]) {
+      return YES;
+    }
+  }
+
+  if (*error == nil) {
+    *error = [GMUserFileSystem errorWithCode:ENOENT];
+  }
+  return NO;
+}
+
+- (void)releaseDirectoryAtPath:(NSString *)path
+                      userData:(id)userData {
+  if (OSXFUSE_OBJC_DELEGATE_ENTRY_ENABLED()) {
+    NSString* traceinfo =
+      [NSString stringWithFormat:@"%@, userData=%p", path, userData];
+    OSXFUSE_OBJC_DELEGATE_ENTRY(DTRACE_STRING(traceinfo));
+  }
+
+  if ([[internal_ delegate] respondsToSelector:_cmd]) {
+    [[internal_ delegate] releaseFileAtPath:path userData:userData];
+  }
+}
+
+- (BOOL) readDirectoryAtPath:(NSString*)path
+                      offset:(off_t)offset
+                  withFiller:(int(^)(NSString* name, uint8_t direntryFileType, ino_t ino, off_t offset)) fillerBlock
+                    userData:(id)userData
+                       error:(NSError **)error
+{
+  if (OSXFUSE_OBJC_DELEGATE_ENTRY_ENABLED()) {
+    NSString* traceinfo =
+      [NSString stringWithFormat:@"%@, offset=%lld userData=%p", path, offset, userData];
+    OSXFUSE_OBJC_DELEGATE_ENTRY(DTRACE_STRING(traceinfo));
+  }
+
+  BOOL ret = NO;
+  if ([[internal_ delegate] respondsToSelector:_cmd]) {
+      ret = [[internal_ delegate] readDirectoryAtPath:path
+                                               offset:offset
+                                           withFiller:fillerBlock
+                                             userData:userData
+                                                error:error];
+  }
+  else {
+    NSArray *contents =
+        [self contentsOfDirectoryAtPath:path
+                                  error:error];
+    if (contents) {
+      ret = YES;
+      fillerBlock(@".", DT_DIR, 0, 0);
+      fillerBlock(@"..", DT_DIR, 0, 0);
+      for (int i = 0, count = [contents count]; i < count; i++) {
+        fillerBlock([contents objectAtIndex:i], DT_UNKNOWN, 0, 0);
+      }
+    }
+  }
+  return ret;
+}
+
 - (NSArray *)contentsOfDirectoryAtPath:(NSString *)path error:(NSError **)error {
   if (OSXFUSE_OBJC_DELEGATE_ENTRY_ENABLED()) {
     OSXFUSE_OBJC_DELEGATE_ENTRY(DTRACE_STRING(path));
@@ -1773,25 +1850,77 @@ static int fusefm_readlink(const char *path, char *buf, size_t size)
   return ret;
 }
 
+static int fusefm_opendir(const char *path, struct fuse_file_info* fi) {
+  NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+  int ret = -ENOENT;
+
+  @try {
+    id userData = nil;
+    NSError* error = nil;
+    GMUserFileSystem* fs = [GMUserFileSystem currentFS];
+    if ([fs openDirectoryAtPath:stringFromPath(path)
+                       userData:&userData
+                          error:&error]) {
+      ret = 0;
+      if (userData != nil) {
+        [userData retain];
+        fi->fh = (uintptr_t)userData;
+      }
+    } else {
+      MAYBE_USE_ERROR(ret, error);
+    }
+  }
+  @catch (id exception) { }
+  [pool release];
+  return ret;
+}
+
+static int fusefm_releasedir(const char *path, struct fuse_file_info* fi) {
+  NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+  int ret = -ENOENT;
+
+  @try {
+    ret=0;
+    id userData = (id)(uintptr_t)fi->fh;
+    GMUserFileSystem* fs = [GMUserFileSystem currentFS];
+    [fs releaseDirectoryAtPath:stringFromPath(path)
+                      userData:userData];
+    if (userData) {
+      [userData release];
+    }
+  }
+  @catch (id exception) { }
+  [pool release];
+  return ret;
+}
+
 static int fusefm_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                           off_t offset, struct fuse_file_info* fi) {
+
   NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
   int ret = -ENOENT;
 
   @try {
     NSError* error = nil;
     GMUserFileSystem* fs = [GMUserFileSystem currentFS];
-    NSArray *contents = 
-    [fs contentsOfDirectoryAtPath:stringFromPath(path) 
-                            error:&error];
-    if (contents) {
+    id userData = (id)(uintptr_t)fi->fh;
+
+    id fillerBlock = ^ int (NSString* name, uint8_t direntryFileType, ino_t ino, off_t offset) {
+
+        struct stat st = { .st_mode = DTTOIF(direntryFileType), .st_ino = (ino ?: FUSE_UNKNOWN_INO) };
+        return filler(buf, pathFromString(name), direntryFileType !=  DT_UNKNOWN ? &st : NULL, offset);
+    };
+
+    if ([fs readDirectoryAtPath:stringFromPath(path)
+                         offset:offset
+                     withFiller:fillerBlock
+                       userData:userData
+                          error:&error])
+    {
       ret = 0;
-      filler(buf, ".", NULL, 0);
-      filler(buf, "..", NULL, 0);
-      for (int i = 0, count = [contents count]; i < count; i++) {
-        filler(buf, pathFromString([contents objectAtIndex:i]), NULL, 0);
-      }
-    } else {
+    }
+    else
+    {
       MAYBE_USE_ERROR(ret, error);
     }
   }

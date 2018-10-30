@@ -280,6 +280,51 @@ extern NSString* const kGMUserFileSystemDidUnmount GM_AVAILABLE(2_0);
 #pragma mark Directory Contents
 
 /*!
+ * @abstract Called when directory is being opened for reading.
+ * @discussion This method may not be called if some other process already has
+ * opened a file descriptor for the directory. Usually this method is not called
+ * for the root drive folder.
+ * @seealso man opendir(3)
+ * @param path The path to a directory.
+ * @param userData Out parameter that can be filled in with arbitrary user data.
+ *        The given userData will be retained and passed back in to delegate
+ *        methods that are acting on this directory.
+ * @param error Should be filled with a POSIX error in case of failure.
+ * @result YES if the directory is successfully opened.
+ */
+- (BOOL)openDirectoryAtPath:(NSString *)path
+                   userData:(id *)userData
+                      error:(NSError **)error;
+
+/*!
+ * @abstract Release user data accosiated with the opened directory.
+ * @seealso man closedir(3)
+ * @param path The path to a directory.
+ * @param userData The user data accosiated with the directory in OpenDirectoryAtPath: method.
+ */
+- (void)releaseDirectoryAtPath:(NSString *)path
+                      userData:(id)userData;
+
+/*!
+ * @abstract Sequentally calls fillerBlock for every item in the folder
+ * @discussion Initially the offset parameter is zero. This method should call the fillerBlock in a loop
+ * with any non-null unique offset value for every item in the directory, until the all items have been provided
+ * or fillerBlock has returned 1.
+ * @seealso man closedir(3)
+ * @param path The path to a directory.
+ * @param fillerBlock The callback for sending item info.
+ * @param offset The non-null offset for the last item provided or zero at the begining of the reading.
+ * @param userData The user data accosiated with the directory in OpenDirectoryAtPath: method.
+ * @param error Should be filled with a POSIX error in case of failure.
+ * @result YES if there were not any error in getting an item info.
+ */
+- (BOOL)readDirectoryAtPath:(NSString*)path
+                     offset:(off_t)offset
+                 withFiller:(int(^)(NSString* name, uint8_t direntryFileType, ino_t ino, off_t offset)) fillerBlock
+                   userData:(id)userData
+                      error:(NSError **)error;
+
+/*!
  * @abstract Returns directory contents at the specified path.
  * @discussion Returns an array of NSString containing the names of files and
  * sub-directories in the specified directory.
