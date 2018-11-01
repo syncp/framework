@@ -2382,6 +2382,8 @@ static struct fuse_operations fusefm_oper = {
   .readlink = fusefm_readlink,
   
   // Directory Contents
+  .opendir = fusefm_opendir,
+  .releasedir = fusefm_releasedir,
   .readdir = fusefm_readdir,
   
   // File Contents
