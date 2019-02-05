@@ -1042,7 +1042,7 @@ static const int kWaitForMountUSleepInterval = 100000;  // 100 ms
   }
 
   if ([[internal_ delegate] respondsToSelector:_cmd]) {
-    [[internal_ delegate] releaseFileAtPath:path userData:userData];
+    [[internal_ delegate] releaseDirectoryAtPath:path userData:userData];
   }
 }
 
